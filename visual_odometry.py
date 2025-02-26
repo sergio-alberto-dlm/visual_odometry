@@ -1,45 +1,52 @@
-from tools import *
+import os
+import munch 
+
 import cv2 as cv
 import numpy as np
-import os
 import pandas as pd
-import matplotlib.pyplot as plt
+
+# import matplotlib
+# matplotlib.use('Agg') 
+# import matplotlib.pyplot as plt
+
+from tools import *
+
+# wandb.init(project="visual_odometry")  
 
 # Frames path
 num_seq      = "00"
-dir_path     = "./gray_images/sequences/" + num_seq + "/image_0"
+dir_path     = "/Users/sergio/Documents/kitti/gray_images/sequences/" + num_seq + "/image_0"
 path_frames  = sorted(os.listdir(dir_path))
-num_frames   = len(path_frames)
+num_frames   = 50 # len(path_frames)
+
 
 # Read calibration
-path_calib_seq = "./gray_images/sequences/" + num_seq + "/calib.txt"
+path_calib_seq = "/Users/sergio/Documents/kitti/gray_images/sequences/" + num_seq + "/calib.txt"
 P, K           = read_calib(path_calib_seq)
 
 # Read the first frame
 old_frame = cv.imread(os.path.join(dir_path, path_frames[0]), cv.IMREAD_GRAYSCALE)
 
-# Real-time pose initialization
-rt_pose = np.eye(4, dtype=np.float32)
-
-# Initialize list to store the estimated trajectory
-estimated_trajectory = []
+# Initialize a dictionary to store the cameras 
+cameras = dict()
 
 # Load ground truth trajectory
-poses_path = "./dataset_poses/poses/00.txt"
+poses_path = "/Users/sergio/Documents/kitti/dataset_poses/poses/" + num_seq + ".txt"
 poses_df   = pd.read_csv(poses_path, header=None, sep=' ')
 poses      = poses_df.apply(lambda row: read_pose(row.values), axis=1)
 
-# Extract ground truth translation components
-gt_trajectory = []
-for pose in poses:
-    _, T = pose
-    x, y, z = T
-    gt_trajectory.append([x, z])
+for idx, pose in enumerate(poses[:num_frames]):
+    R_gt, T_gt = pose
+    T_gt = T_gt.flatten()
+    cameras[idx] = munch.munchify({"R" : None, "T" : None, "R_gt" : R_gt, "T_gt" : T_gt, "uid" : idx})
 
-gt_trajectory = np.array(gt_trajectory)
+# Real-time pose initialization
+rt_pose = np.eye(4, dtype=np.float32)
+cameras[0].R = rt_pose[:3, :3]
+cameras[0].T = rt_pose[:3, 3]
 
 # Create window to display
-win_name = "KITTI Sequence"
+win_name  = "KITTI Sequence"
 traj_name = "Trajectory"
 cv.namedWindow(win_name, cv.WINDOW_NORMAL)
 
@@ -56,16 +63,13 @@ for i in range(1, num_frames):
 
     # Get relative pose
     R, T     = get_pose(pts1, pts2, K)
-    hom_pose = transf_hom(R, T)
 
-    # Update real-time pose
-    rt_pose = np.matmul(rt_pose, np.linalg.inv(hom_pose))
+    delta       = transf_hom(R, T)
+    prev_pose   = transf_hom(cameras[i-1].R, cameras[i-1].T)
+    update_pose = delta @ prev_pose
 
-    # Extract translation vector
-    x, y, z = rt_pose[0, 3], rt_pose[1, 3], rt_pose[2, 3]
-
-    # Store the current estimated position
-    estimated_trajectory.append([x, z])
+    cameras[i].R = update_pose[:3, :3]
+    cameras[i].T = update_pose[:3, 3]
 
     # Display frames and trajectory
     frame = cv.drawKeypoints(curr_frame, kps1, None, color=(0,255,0), flags=0)
@@ -82,12 +86,11 @@ for i in range(1, num_frames):
 
 cv.destroyAllWindows()
 
-# Convert estimated trajectory to numpy array
-estimated_trajectory = np.array(estimated_trajectory)
-
-# Plot ground truth vs. estimated trajectory
-plt.figure(figsize=(10, 5))
-plt.subplot(121); plt.plot(gt_trajectory[:, 0], gt_trajectory[:, 1], label='Ground Truth'); plt.legend()
-plt.subplot(122); plt.plot(estimated_trajectory[:, 0], estimated_trajectory[:, 1], label='Estimated'); plt.legend()
-plt.savefig("path_comparison.jpg")
-plt.show()
+eval_ate(
+    frames=cameras, 
+    kf_ids=range(num_frames), 
+    save_dir="results_" + num_seq, 
+    iterations=0, 
+    final=True, 
+    monocular=True
+)
