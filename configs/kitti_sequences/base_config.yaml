@@ -1,0 +1,30 @@
+Results:
+  save_dir: "results"
+  save_results: True
+  save_trj: True
+  save_trj_kf_intv: 5
+  use_wandb: False 
+
+Dataset:
+  dataset_path: "/Users/sergio/Documents/kitti"
+  type: "kitti"
+  sensor_type: 'monocular'
+
+Training:
+  # Tracking and Mapping
+  tracking_itr_num: 100
+  mapping_itr_num: 150
+  kf_interval: 5
+  window_size: 8
+  pose_window: 3
+  edge_threshold: 1.1
+  rgb_boundary_threshold: 0.01
+  alpha: 0.9
+  kf_translation: 0.08
+  kf_min_translation: 0.05
+  kf_overlap: 0.9
+  kf_cutoff: 0.3
+  single_thread: False
+  lr:
+    cam_rot_delta: 0.003
+    cam_trans_delta: 0.001
