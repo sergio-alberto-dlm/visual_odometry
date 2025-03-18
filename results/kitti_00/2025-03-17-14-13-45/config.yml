@@ -1,0 +1,41 @@
+Dataset:
+  Calibration:
+    cx: 607.1928
+    cy: 185.2157
+    distorted: false
+    fx: 718.856
+    fy: 718.856
+    height: 376
+    k1: 0
+    k2: 0
+    k3: 0
+    p1: 0
+    p2: 0
+    width: 1241
+  dataset_path: /Users/sergio/Documents/kitti
+  sensor_type: monocular
+  sequence: '00'
+  type: kitti
+Results:
+  save_dir: results_00/kitti_00/2025-03-17-14-13-45
+  save_results: true
+  save_trj: true
+  save_trj_kf_intv: 5
+  use_wandb: false
+Training:
+  alpha: 0.9
+  edge_threshold: 1.1
+  kf_cutoff: 0.3
+  kf_interval: 5
+  kf_min_translation: 0.05
+  kf_overlap: 0.9
+  kf_translation: 0.08
+  lr:
+    cam_rot_delta: 0.003
+    cam_trans_delta: 0.001
+  mapping_itr_num: 150
+  pose_window: 3
+  rgb_boundary_threshold: 0.01
+  single_thread: false
+  tracking_itr_num: 100
+  window_size: 8
