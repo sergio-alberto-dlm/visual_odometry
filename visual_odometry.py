@@ -1,96 +1,135 @@
 import os
-import munch 
+import sys
+import time
+from argparse import ArgumentParser
+from datetime import datetime
 
-import cv2 as cv
-import numpy as np
-import pandas as pd
+import torch
+import torch.multiprocessing as mp
+import yaml
+from munch import munchify
+import numpy as np 
 
-# import matplotlib
-# matplotlib.use('Agg') 
-# import matplotlib.pyplot as plt
-
-from tools import *
-
-# wandb.init(project="visual_odometry")  
-
-# Frames path
-num_seq      = "00"
-dir_path     = "/Users/sergio/Documents/kitti/gray_images/sequences/" + num_seq + "/image_0"
-path_frames  = sorted(os.listdir(dir_path))
-num_frames   = 50 # len(path_frames)
+import wandb
+from utils.general_utils import mkdir_p, load_config
+from utils.dataset import load_dataset
+from utils.eval_utils import eval_ate
+from utils.logging_utils import Log
+from utils.vo_frontend import FrontEnd
 
 
-# Read calibration
-path_calib_seq = "/Users/sergio/Documents/kitti/gray_images/sequences/" + num_seq + "/calib.txt"
-P, K           = read_calib(path_calib_seq)
+class SLAM:
+    def __init__(self, config, save_dir=None):
+        # start = torch.cuda.Event(enable_timing=True)
+        # end = torch.cuda.Event(enable_timing=True)
 
-# Read the first frame
-old_frame = cv.imread(os.path.join(dir_path, path_frames[0]), cv.IMREAD_GRAYSCALE)
+        # start.record()
+        start_time = time.time()
 
-# Initialize a dictionary to store the cameras 
-cameras = dict()
+        self.config = config
+        self.save_dir = save_dir
 
-# Load ground truth trajectory
-poses_path = "/Users/sergio/Documents/kitti/dataset_poses/poses/" + num_seq + ".txt"
-poses_df   = pd.read_csv(poses_path, header=None, sep=' ')
-poses      = poses_df.apply(lambda row: read_pose(row.values), axis=1)
+        self.monocular = self.config["Dataset"]["sensor_type"] == "monocular"
+        self.dataset = load_dataset(args=None, path=None, config=config)
 
-for idx, pose in enumerate(poses[:num_frames]):
-    R_gt, T_gt = pose
-    T_gt = T_gt.flatten()
-    cameras[idx] = munch.munchify({"R" : None, "T" : None, "R_gt" : R_gt, "T_gt" : T_gt, "uid" : idx})
+        frontend_queue = mp.Queue()
 
-# Real-time pose initialization
-rt_pose = np.eye(4, dtype=np.float32)
-cameras[0].R = rt_pose[:3, :3]
-cameras[0].T = rt_pose[:3, 3]
+        self.config["Results"]["save_dir"] = save_dir
+        self.config["Training"]["monocular"] = self.monocular
 
-# Create window to display
-win_name  = "KITTI Sequence"
-traj_name = "Trajectory"
-cv.namedWindow(win_name, cv.WINDOW_NORMAL)
+        self.frontend = FrontEnd(self.config)
+
+        self.frontend.dataset = self.dataset
+        self.frontend.frontend_queue = frontend_queue
+        self.frontend.set_hyperparams()
 
 
-for i in range(1, num_frames):
+        self.frontend.run()
 
-    # Read current frame
-    curr_frame = cv.imread(os.path.join(dir_path, path_frames[i]), cv.IMREAD_GRAYSCALE)
+        # end.record()
+        # torch.cuda.synchronize()
+        end_time = time.time()
+        # empty the frontend queue
+        N_frames = len(self.frontend.cameras)
+        # elapsed_time = start.elapsed_time(end)
+        elapsed_time = end_time - start_time
+        FPS = N_frames / (elapsed_time * 0.001)
+        Log("Total time", elapsed_time * 0.001, tag="Eval")
+        Log("Total FPS", N_frames / (elapsed_time * 0.001), tag="Eval")
 
-    # Get correspondences
-    match_dict = get_matches(old_frame, curr_frame)
-    pts1, pts2 = match_dict["matches"]
-    kps1, kps2 = match_dict["keypoints"]
+        ATE = eval_ate(
+            self.frontend.cameras,
+            np.arange(0, len(self.dataset), 20), #self.frontend.kf_indices,
+            self.save_dir,
+            0,
+            final=True,
+            monocular=self.monocular,
+        )
 
-    # Get relative pose
-    R, T     = get_pose(pts1, pts2, K)
+        columns = ["RMSE ATE", "FPS"]
+        metrics_table = wandb.Table(columns=columns)
+        metrics_table.add_data(
+                ATE,
+                FPS,
+            )
+        wandb.log({"Metrics": metrics_table})
 
-    delta       = transf_hom(R, T)
-    prev_pose   = transf_hom(cameras[i-1].R, cameras[i-1].T)
-    update_pose = delta @ prev_pose
+    def run(self):
+        pass
 
-    cameras[i].R = update_pose[:3, :3]
-    cameras[i].T = update_pose[:3, 3]
 
-    # Display frames and trajectory
-    frame = cv.drawKeypoints(curr_frame, kps1, None, color=(0,255,0), flags=0)
-    drawBannerText(frame, f'Frame: {i}, Pose: {T}')
-    cv.imshow(win_name, frame)
+if __name__ == "__main__":
+    # Set up command line argument parser
+    parser = ArgumentParser(description="Training script parameters")
+    parser.add_argument("--config", type=str)
+    parser.add_argument("--eval", action="store_true")
 
-    # Update old frame
-    old_frame = curr_frame.copy()
+    args = parser.parse_args(sys.argv[1:])
 
-    # Handle key events
-    key = cv.waitKey(1)
-    if key == 27:
-        break
+    mp.set_start_method("spawn")
 
-cv.destroyAllWindows()
+    with open(args.config, "r") as yml:
+        config = yaml.safe_load(yml)
 
-eval_ate(
-    frames=cameras, 
-    kf_ids=range(num_frames), 
-    save_dir="results_" + num_seq, 
-    iterations=0, 
-    final=True, 
-    monocular=True
-)
+    config = load_config(args.config)
+    save_dir = None
+    PROJECT_NAME = "visual_odometry_kitti"
+
+    if args.eval:
+        Log("Running Visual Odometry in Evaluation Mode")
+        Log("Following config will be overriden")
+        Log("\tsave_results=True")
+        config["Results"]["save_results"] = True
+        Log("\tuse_wandb=True")
+        config["Results"]["use_wandb"] = True
+
+    if config["Results"]["save_results"]:
+        mkdir_p(config["Results"]["save_dir"])
+        current_datetime = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        path = config["Dataset"]["dataset_path"].split("/")
+        save_dir = os.path.join(
+            config["Results"]["save_dir"], path[-1] + "_" + config["Dataset"]["sequence"], current_datetime
+        )
+        tmp = args.config
+        tmp = tmp.split(".")[0]
+        config["Results"]["save_dir"] = save_dir
+        mkdir_p(save_dir)
+        with open(os.path.join(save_dir, "config.yml"), "w") as file:
+            documents = yaml.dump(config, file)
+        Log("saving results in " + save_dir)
+        run = wandb.init(
+            project=PROJECT_NAME,
+            name=f"{tmp}_{current_datetime}",
+            config=config,
+            mode=None if config["Results"]["use_wandb"] else "disabled",
+        )
+        wandb.define_metric("frame_idx")
+        wandb.define_metric("ate*", step_metric="frame_idx")
+
+    slam = SLAM(config, save_dir=save_dir)
+
+    slam.run()
+    wandb.finish()
+
+    # All done
+    Log("Done.")
