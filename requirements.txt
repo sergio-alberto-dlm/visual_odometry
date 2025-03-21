@@ -1,0 +1,11 @@
+evo==1.31.1
+matplotlib==3.8.4
+munch==4.0.0
+numpy==2.2.4
+opencv_contrib_python==4.11.0.86
+Pillow==11.1.0
+PyYAML==6.0.2
+rich==13.9.4
+torch==2.5.1
+trimesh==4.6.0
+wandb==0.19.8
