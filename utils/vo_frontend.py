@@ -1,4 +1,5 @@
 import time
+import os 
 
 import numpy as np
 import torch
@@ -48,6 +49,18 @@ class FrontEnd(mp.Process):
         # self.kf_interval = self.config["Training"]["kf_interval"]
         # self.window_size = self.config["Training"]["window_size"]
         self.single_thread = self.config["Training"]["single_thread"]
+        self.max_num_features = self.config["Training"]["max_num_features"]
+        self.render_video = self.config["Results"]["render_video"]
+        if self.render_video: 
+            self.video_writer = cv2.VideoWriter(
+            os.path.join(self.save_dir, "feature_tracking_output.mp4"),
+            cv2.VideoWriter_fourcc(*'avc1'),
+            32,  # FPS
+            (self.dataset.width, self.dataset.height)
+            )
+        else:
+            self.video_writer = None 
+            
 
     def add_new_keyframe(self, cur_frame_idx, depth=None, opacity=None, init=False):
         rgb_boundary_threshold = self.config["Training"]["rgb_boundary_threshold"]
@@ -134,13 +147,14 @@ class FrontEnd(mp.Process):
 
         # Display frames and trajectory
         frame = cv2.drawKeypoints((viewpoint.original_image.squeeze().numpy() * 255).astype(np.uint8), 
-                                  kps1, None, color=(0,255,0), flags=0)
-        
+                                  kps2, None, color=(0,255,0), flags=0)
         t_list = pose_update[:3, 3].cpu().numpy().tolist()  
         # print(f"tracked frame: {cur_frame_idx}")
         drawBannerText(frame, f"Frame: {cur_frame_idx}, Position: ({t_list[0]:0.2f}, {t_list[1]:0.2f}, {t_list[2]:0.2f})")
         cv2.imshow("visual odometry", frame)
         key = cv2.waitKey(1)
+
+        if self.render_video: self.video_writer.write(frame)
 
     def tracking(self, cur_frame_idx, viewpoint):
         prev = self.cameras[cur_frame_idx - self.use_every_n_frames]
@@ -339,6 +353,7 @@ class FrontEnd(mp.Process):
         while True:
             # tic.record()
             if cur_frame_idx >= len(self.dataset):
+                if self.video_writer is not None: self.video_writer.release()
                 if self.save_results:
                     eval_ate(
                         self.cameras,
@@ -354,6 +369,7 @@ class FrontEnd(mp.Process):
                 self.dataset, cur_frame_idx, projection_matrix
             )
             viewpoint.compute_grad_mask(self.config)
+            viewpoint.compute_orb_features(max_num_features=self.max_num_features)
 
             self.cameras[cur_frame_idx] = viewpoint
 
@@ -369,49 +385,7 @@ class FrontEnd(mp.Process):
 
             # Tracking
             self.tracking_orb(cur_frame_idx, viewpoint)
-
-            # if self.requested_keyframe > 0:
-            #     self.cleanup(cur_frame_idx)
-            #     cur_frame_idx += 1
-            #     continue
-
-            # last_keyframe_idx = self.current_window[0]
-            # check_time = (cur_frame_idx - last_keyframe_idx) >= self.kf_interval
-            # create_kf = self.is_keyframe(
-            #     cur_frame_idx,
-            #     last_keyframe_idx,
-            #     self.occ_aware_visibility,
-            # )
-            # if len(self.current_window) < self.window_size:
-            #     create_kf = (
-            #         check_time
-            #         and point_ratio < self.config["Training"]["kf_overlap"]
-            #     )
-            # if self.single_thread:
-            #     create_kf = check_time and create_kf
-            # if create_kf:
-            #     self.current_window, removed = self.add_to_window(
-            #         cur_frame_idx,
-            #         self.occ_aware_visibility,
-            #         self.current_window,
-            #     )
-                # if self.monocular and not self.initialized and removed is not None:
-                #     self.reset = True
-                #     Log(
-                #         "Keyframes lacks sufficient overlap to initialize the map, resetting."
-                #     )
-                #     continue
-                # depth_map = self.add_new_keyframe(
-                #     cur_frame_idx,
-                #     depth=render_pkg["depth"],
-                #     opacity=render_pkg["opacity"],
-                #     init=False,
-                # )
-                # self.request_keyframe(
-                #     cur_frame_idx, viewpoint, self.current_window, depth_map
-                # )
-            # else:
-            #     self.cleanup(cur_frame_idx)
+            
             cur_frame_idx += 1
 
             if (

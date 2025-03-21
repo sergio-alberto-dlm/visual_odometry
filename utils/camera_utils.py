@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+import cv2 
+import numpy as np 
 
 from utils.vo_utils import image_gradient, image_gradient_mask
 from utils.pose_utils import getWorld2View2
@@ -116,6 +118,11 @@ class Camera(nn.Module):
         self.grad_mask = (
             img_grad_intensity > median_img_grad_intensity * edge_threshold
         )
+
+    def compute_orb_features(self, max_num_features):
+        img = (self.original_image.squeeze().numpy() * 255).astype(np.uint8)
+        orb = cv2.ORB_create(max_num_features)
+        self.keypoints, self.descriptors = orb.detectAndCompute(img, None)
 
     def clean(self):
         self.original_image = None

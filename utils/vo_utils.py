@@ -96,15 +96,6 @@ def get_matches(viewpoint, prev):
         input  : two frames 
         output : pair of corresponding points and keypoints 
     """
-
-    # Detect features 
-    max_num_features         = 5000
-    img1 = (prev.original_image.squeeze().numpy() * 255).astype(np.uint8)
-    img2 = (viewpoint.original_image.squeeze().numpy() * 255).astype(np.uint8)
-    orb                      = cv2.ORB_create(max_num_features)
-    keypoints1, descriptors1 = orb.detectAndCompute(img1, None)
-    keypoints2, descriptors2 = orb.detectAndCompute(img2, None)
-
     # FLANN parameters for LSH (suitable for binary descriptors like ORB)
     FLANN_INDEX_LSH = 6
     index_params    = dict(
@@ -113,26 +104,29 @@ def get_matches(viewpoint, prev):
                         key_size          = 12,     
                         multi_probe_level = 1
                         ) 
-    search_params   = dict(checks=50)  # or pass empty dictionary
+    search_params = dict(checks=50)  # or pass empty dictionary
 
     # Create FLANN-based matcher
     flann   = cv2.FlannBasedMatcher(index_params, search_params)
-    matches = flann.knnMatch(descriptors1, descriptors2, k=2)
+    matches = flann.knnMatch(prev.descriptors, viewpoint.descriptors, k=2)
 
     # Find corresponding points 
     pts1 = []
     pts2 = []
     
     # Ratio test as per Lowe's paper
-    for i,(m,n) in enumerate(matches):
+    for i, m_n in enumerate(matches):
+        if len(m_n) < 2:
+            continue  # Not enough matches to apply ratio test
+        m, n = m_n
         if m.distance < 0.8*n.distance:
-            pts2.append(keypoints2[m.trainIdx].pt)
-            pts1.append(keypoints1[m.queryIdx].pt)
+            pts1.append(prev.keypoints[m.queryIdx].pt)
+            pts2.append(viewpoint.keypoints[m.trainIdx].pt)
 
     pts1 = np.int32(pts1)
     pts2 = np.int32(pts2)
 
-    return {"matches" : (pts1, pts2), "keypoints" : (keypoints1, keypoints2)}
+    return {"matches" : (pts1, pts2), "keypoints" : (prev.keypoints, viewpoint.keypoints)}
 
 def get_pose(pts1, pts2, cameraMatrix):
     
