@@ -4,6 +4,7 @@ Results:
   save_trj: True
   save_trj_kf_intv: 5
   use_wandb: False 
+  render_video: False 
 
 Dataset:
   dataset_path: "/Users/sergio/Documents/kitti"
@@ -28,3 +29,4 @@ Training:
   lr:
     cam_rot_delta: 0.003
     cam_trans_delta: 0.001
+  max_num_features: 2000
