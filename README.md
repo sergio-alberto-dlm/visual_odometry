@@ -55,6 +55,7 @@ Modify your YAML config file to point to the correct KITTI dataset path and tune
 
 Demo on the "01" kitti sequence
 
+[](https://youtu.be/XsaM-IXATxI)
 <video src="assets/feature_tracking_output.mp4" controls autoplay loop width="600"></video>
 
 <img src="assets/evo_2dplot_final.png" alt="Tracking Example" width="400"/>
